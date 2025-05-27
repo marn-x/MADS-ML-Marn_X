@@ -1,0 +1,10 @@
+.venv
+data
+img
+logs
+mlruns
+modellog
+modellogs
+notebooks
+models
+*.db

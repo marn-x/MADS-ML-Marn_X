@@ -1,0 +1,11 @@
+# General settings (can be overwritten in file specific configs below)
+[ settings ]
+# Logs to sys.stderr and logs/logs.log
+logging_level = "INFO" # Available levels: ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]
+
+raw = "data/raw"
+processed = "data/processed"
+models = "models"
+img = "img"
+
+[ convolutions ]
