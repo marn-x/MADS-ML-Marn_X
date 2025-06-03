@@ -6,6 +6,16 @@ from contextlib import contextmanager
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from mltrainer import Trainer, TrainerSettings, ReportTypes
+from mltrainer.rnn_models import GRUmodel, ModelConfig
+from mltrainer.metrics import Accuracy, Metric
+
+from settings import get_device
+
+from custom_factories import AugmentPreprocessor, EurosatDatasetFactory, eurosatsettings, eurosat_data_transforms
+from pathlib import Path
+
+
 
 
 class PyTorchTrainingTracker:
@@ -208,7 +218,7 @@ def train_epoch(
     model: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    criterion: nn.Module,
+    loss_fn: nn.Module,
     device: str,
     tracker: Optional[PyTorchTrainingTracker] = None,
     log_interval: int = 10
@@ -224,7 +234,7 @@ def train_epoch(
         
         optimizer.zero_grad()
         output = model(data)
-        loss = criterion(output, target)
+        loss = loss_fn(output, target)
         loss.backward()
         optimizer.step()
         
@@ -246,7 +256,7 @@ def train_epoch(
 def eval_epoch(
     model: nn.Module,
     loader: DataLoader,
-    criterion: nn.Module,
+    loss_fn: nn.Module,
     device: str
 ) -> Tuple[float, float]:
     """Evaluate for one epoch."""
@@ -259,7 +269,7 @@ def eval_epoch(
         for data, target in loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            loss = criterion(output, target)
+            loss = loss_fn(output, target)
             
             total_loss += loss.item()
             _, predicted = output.max(1)
@@ -268,15 +278,71 @@ def eval_epoch(
     
     return total_loss / len(loader), 100. * correct / total
 
+class MLTrainerIntegration(Trainer):
+    def __init__(
+        self, 
+        model: nn.Module,
+        traindataloader: DataLoader,
+        validdataloader: DataLoader,
+        optimizer: torch.optim.Optimizer = torch.optim.Adam,
+        backend: str = "tensorboard",
+        optimizer_kwargs: Optional[Dict] = None,
+        scheduler: Optional[Callable] = None,
+        train_steps: Optional[int] = None,
+        valid_steps: Optional[int] = None,
+        scheduler_kwargs: Optional[dict] = None,
+        earlystop_kwargs: Optional[Dict[str, Any]] = None,
+        reporttypes: Optional[List[ReportTypes]] = None,
+        loss_fn: Callable = nn.CrossEntropyLoss(),
+        metrics: list[Metric] = [Accuracy()],
+        logdir: Path = Path("./logs"),
+        epochs: int = 10,
+        batch_size: int = 32,
+        learning_rate: int = 0.001,
+        device: Optional[str] = None,
+        settings: Optional[TrainerSettings] = None
+    ):
+        self.model = model
+        self.optimizer = optimizer
+        self.epochs = epochs
+        self.metrics = metrics
+        self.logdir = logdir
+        self.train_steps = train_steps or len(traindataloader)
+        self.valid_steps = valid_steps or len(validdataloader)
+        self.traindataloader = traindataloader.stream() if hasattr(traindataloader, "stream") else traindataloader
+        self.validdataloader = validdataloader.stream() if hasattr(validdataloader, "stream") else validdataloader
+        self.reporttypes = reporttypes or [getattr(ReportTypes, backend.upper())]
+        self.optimizer_kwargs = optimizer_kwargs or optimizer.param_groups[0] if hasattr(optimizer, "param_groups") and 0 < len(optimizer.param_groups) else {"lr" : learning_rate}
+        self.scheduler = scheduler
+        if scheduler:
+            self.scheduler_kwargs = scheduler_kwargs or vars(scheduler)
+        self.earlystop_kwargs = earlystop_kwargs
+        self.device = device or get_device()
+        self.loss_fn = loss_fn
+        self.last_epoch = 0
+
+        self.settings = TrainerSettings(**vars(self))
+
+        super().__init__(model=self.model,
+                         settings=self.settings,
+                         loss_fn=self.loss_fn,
+                         optimizer=self.optimizer,
+                         traindataloader=self.traindataloader,
+                         validdataloader=self.validdataloader,
+                         scheduler=self.scheduler,
+                         device=device)
+
 
 def track_pytorch_training(
     model: nn.Module,
     train_loader: DataLoader,
     val_loader: Optional[DataLoader] = None,
+    use_mltrainer: bool = True,
     optimizer: Optional[torch.optim.Optimizer] = None,
-    criterion: Optional[nn.Module] = None,
+    loss_fn: Optional[nn.Module] = None,
     epochs: int = 10,
     backend: str = "tensorboard",
+    scheduler: Optional[Callable] = None,
     experiment_name: str = "pytorch_training",
     log_interval: int = 10,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -291,7 +357,7 @@ def track_pytorch_training(
         train_loader: Training data loader
         val_loader: Validation data loader (optional)
         optimizer: Optimizer (if None, will create Adam)
-        criterion: Loss function (if None, will use CrossEntropyLoss)
+        loss_fn: Loss function (if None, will use CrossEntropyLoss)
         epochs: Number of epochs to train
         backend: One of "tensorboard", "mlflow", or "ray"
         experiment_name: Name of the experiment
@@ -307,12 +373,12 @@ def track_pytorch_training(
     # Initialize tracker
     tracker = PyTorchTrainingTracker(backend, experiment_name, **tracker_kwargs)
     
-    # Setup model, optimizer, and criterion
+    # Setup model, optimizer, and loss_fn
     model = model.to(device)
     if optimizer is None:
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    if criterion is None:
-        criterion = nn.CrossEntropyLoss()
+    if loss_fn is None:
+        loss_fn = nn.CrossEntropyLoss()
     
     # Setup checkpoint directory
     if checkpoint_dir:
@@ -322,63 +388,79 @@ def track_pytorch_training(
     # Log hyperparameters
     hyperparams = {
         "epochs": epochs,
-        "batch_size": train_loader.batch_size,
+        "batch_size": getattr(train_loader, "batch_size", getattr(train_loader, "batchsize", 32)),
         "learning_rate": optimizer.param_groups[0]['lr'],
         "model_name": model.__class__.__name__,
         "optimizer": optimizer.__class__.__name__,
-        "criterion": criterion.__class__.__name__,
+        "loss_fn": loss_fn.__class__.__name__,
         "device": device,
     }
     tracker.log_params(hyperparams)
     
     # Training loop
     best_val_acc = 0.0
-    
+
     try:
-        for epoch in range(epochs):
-            tracker.set_epoch(epoch)
-            
-            # Train
-            train_loss, train_acc = train_epoch(
-                model, train_loader, optimizer, criterion, device, tracker, log_interval
+        if use_mltrainer:
+            ml_trainer = MLTrainerIntegration(
+                model,
+                train_loader,
+                val_loader,
+                optimizer = optimizer.__class__,
+                backend = backend,
+                device = device,
+                scheduler = scheduler,
+                loss_fn = loss_fn,
+                epochs = epochs,
+                batch_size = hyperparams["batch_size"]
             )
-            
-            # Log epoch metrics
-            epoch_metrics = {
-                "train/epoch_loss": train_loss,
-                "train/epoch_accuracy": train_acc,
-                "epoch": epoch
-            }
-            
-            # Evaluate if validation loader is provided
-            if val_loader:
-                val_loss, val_acc = eval_epoch(model, val_loader, criterion, device)
-                epoch_metrics.update({
-                    "val/epoch_loss": val_loss,
-                    "val/epoch_accuracy": val_acc
-                })
+
+            ml_trainer.loop()
+        else:
+            for epoch in range(epochs):
+                tracker.set_epoch(epoch)
                 
-                # Save best model
-                if checkpoint_dir and val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    checkpoint_path = checkpoint_dir / f"best_model_epoch_{epoch}.pt"
-                    torch.save({
-                        'epoch': epoch,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'val_acc': val_acc,
-                        'val_loss': val_loss
-                    }, checkpoint_path)
-                    tracker.log_artifacts(checkpoint_path)
+                # Train
+                train_loss, train_acc = train_epoch(
+                    model, train_loader, optimizer, loss_fn, device, tracker, log_interval
+                )
+                
+                # Log epoch metrics
+                epoch_metrics = {
+                    "train/epoch_loss": train_loss,
+                    "train/epoch_accuracy": train_acc,
+                    "epoch": epoch
+                }
+                
+                # Evaluate if validation loader is provided
+                if val_loader:
+                    val_loss, val_acc = eval_epoch(model, val_loader, loss_fn, device)
+                    epoch_metrics.update({
+                        "val/epoch_loss": val_loss,
+                        "val/epoch_accuracy": val_acc
+                    })
+                    
+                    # Save best model
+                    if checkpoint_dir and val_acc > best_val_acc:
+                        best_val_acc = val_acc
+                        checkpoint_path = checkpoint_dir / f"best_model_epoch_{epoch}.pt"
+                        torch.save({
+                            'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'val_acc': val_acc,
+                            'val_loss': val_loss
+                        }, checkpoint_path)
+                        tracker.log_artifacts(checkpoint_path)
+                
+                tracker.log_metrics(epoch_metrics, step=epoch)
+                
+                print(f"Epoch {epoch}/{epochs} - "
+                    f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%"
+                    + (f", Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%" if val_loader else ""))
             
-            tracker.log_metrics(epoch_metrics, step=epoch)
-            
-            print(f"Epoch {epoch}/{epochs} - "
-                  f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%"
-                  + (f", Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%" if val_loader else ""))
-        
-        # Log final model
-        tracker.log_model(model, optimizer)
+            # Log final model
+            tracker.log_model(model, optimizer)
         
     except KeyboardInterrupt:
         print("Training interrupted by user")
@@ -446,17 +528,17 @@ def ray_tune_pytorch(
         
         # Create optimizer with config
         optimizer = torch.optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
-        criterion = nn.CrossEntropyLoss()
+        loss_fn = nn.CrossEntropyLoss()
         
         # Training loop
         for epoch in range(max_epochs):
             # Train
             train_loss, train_acc = train_epoch(
-                model, train_loader, optimizer, criterion, device
+                model, train_loader, optimizer, loss_fn, device
             )
             
             # Validate
-            val_loss, val_acc = eval_epoch(model, val_loader, criterion, device)
+            val_loss, val_acc = eval_epoch(model, val_loader, loss_fn, device)
             
             # Report to Ray Tune
             metrics = {
@@ -535,6 +617,15 @@ if __name__ == "__main__":
     import torchvision
     import torchvision.transforms as transforms
     
+    eurosatfactory = EurosatDatasetFactory(eurosatsettings, datadir=Path.home() / ".cache/mads_datasets")
+    preprocessor = AugmentPreprocessor(eurosat_data_transforms)
+    streamers = eurosatfactory.create_datastreamer(batchsize=32, preprocessor=preprocessor)
+
+    train = streamers["train"]
+    valid = streamers["valid"]
+    # train_loader = train.stream()
+    # val_loader = valid.stream()
+    
     # Create a simple CNN model
     class SimpleCNN(nn.Module):
         def __init__(self, num_classes=10, hidden_size=128):
@@ -558,16 +649,38 @@ if __name__ == "__main__":
     
     # Example 1: Track with TensorBoard
     print("Example 1: Tracking with TensorBoard")
-    # model = SimpleCNN()
-    # tracker = track_pytorch_training(
-    #     model=model,
-    #     train_loader=train_loader,
-    #     val_loader=val_loader,
-    #     backend="tensorboard",
-    #     experiment_name="cnn_classification",
-    #     epochs=5,
-    #     checkpoint_dir="checkpoints/tensorboard"
-    # )
+    config = {
+        "input_size": 3,
+        "output_size": 20,
+        "data_dir": "data/raw/gestures/gestures-dataset",
+        "hidden_size": 256,
+        "dropout": 0.3,
+        "num_layers": 2,
+    }
+
+    from torchvision.models import resnet18, ResNet18_Weights
+    resnet = torchvision.models.resnet18(weights=ResNet18_Weights.DEFAULT)
+
+    for name, param in resnet.named_parameters():
+        param.requires_grad = False
+
+    resnet.fc = nn.Sequential(
+        nn.Linear(resnet.fc.in_features, 10)
+        # nn.Linear(in_features, 128), nn.ReLU(), nn.Dropout(0.1), nn.Linear(128, 5)
+    )
+
+    resnet = resnet.to("cuda")
+
+    # model = GRUmodel()
+    tracker = track_pytorch_training(
+        model=resnet,
+        train_loader=train,
+        val_loader=valid,
+        backend="mlflow",
+        experiment_name="cnn_classification",
+        epochs=5,
+        checkpoint_dir="checkpoints/tensorboard"
+    )
     
     # Example 2: Track with MLFlow
     print("\nExample 2: Tracking with MLFlow")
