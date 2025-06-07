@@ -9,5 +9,7 @@ notebooks
 models
 runs
 checkpoints
+old
 __pycache__
+*.log
 *.db

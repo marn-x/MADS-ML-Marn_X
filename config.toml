@@ -1,14 +1,19 @@
-model_name = "mymodel"
+model_name = "resnet18"
 num_classes = 10
 pretrained = true
 epochs = 1
-batch_size = 64
+batch_size = 32
 learning_rate = 0.001
 optimizer_type = "adam"
 criterion_type = "cross_entropy"
 device = "auto"
-log_level = "DEBUG"
-log_file = "training_example.log"
+log_level = "INFO"
+log_to_file = false
+log_file_path = "training.log"
+log_format = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+log_rotation = "10 MB"
+log_retention = "7 days"
+log_compression = "zip"
 log_interval = 10
 experiment_name = "eurosat_classification"
 backend = "tensorboard"
@@ -33,9 +38,3 @@ ray_mode = "max"
 
 [optimizer_kwargs]
 weight_decay = 1e-5
-
-[criterion_kwargs]
-
-[tags]
-
-[scheduler_kwargs]

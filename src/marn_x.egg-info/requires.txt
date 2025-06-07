@@ -1,0 +1,15 @@
+hyperopt>=0.2.7
+jupyter>=1.1.1
+mads-datasets>=0.3.14
+mltrainer>=0.2.2
+pandas>=2.2.3
+plotly>=6.1.0
+seaborn>=0.13.2
+tensorboard>=2.19.0
+tokenizers>=0.21.1
+toml>=0.10.2
+tomlserializer>=0.2.0
+torch>=2.7.0
+torch-tb-profiler>=0.4.3
+torchinfo>=1.8.0
+torchvision>=0.22.0

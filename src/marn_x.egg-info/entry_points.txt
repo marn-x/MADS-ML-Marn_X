@@ -1,0 +1,3 @@
+[console_scripts]
+create-config = marn_x.utils:create_sample_config
+tracker = marn_x.main:main

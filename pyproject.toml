@@ -1,9 +1,19 @@
 [project]
-name = "mads-ml-marn-x"
+name = "marn_x"
 version = "0.1.0"
 description = "Marnix' version of the MADS_ML module of ADS"
 readme = "README.md"
-requires-python = "==3.12.10"
+requires-python = ">=3.12.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+license = {text = "MIT"}
 dependencies = [
     "hyperopt>=0.2.7",
     "jupyter>=1.1.1",
@@ -11,7 +21,6 @@ dependencies = [
     "mltrainer>=0.2.2",
     "pandas>=2.2.3",
     "plotly>=6.1.0",
-    "ray[data,serve,train,tune]>=2.46.0",
     "seaborn>=0.13.2",
     "tensorboard>=2.19.0",
     "tokenizers>=0.21.1",
@@ -35,3 +44,39 @@ torchvision = [
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[tool.uv]
+default-groups = ["mlflow", "ray"]
+
+[dependency-groups]
+mlflow = [
+    "mlflow>=2.0.0",
+]
+ray = [
+    "ray[data,serve,train,tune]>=2.46.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/marn-x/MADS-ML-Marn_X"
+Documentation = "https://github.com/marn-x/MADS-ML-Marn_X/blob/main/README.md"
+Repository = "https://github.com/marn-x/MADS-ML-Marn_X"
+Issues = "https://github.com/marn-x/MADS-ML-Marn_X/issues"
+
+[project.scripts]
+tracker = "marn_x.main:main"
+create-config = "marn_x.utils:create_sample_config"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

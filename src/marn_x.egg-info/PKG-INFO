@@ -1,3 +1,39 @@
+Metadata-Version: 2.4
+Name: marn_x
+Version: 0.1.0
+Summary: Marnix' version of the MADS_ML module of ADS
+License: MIT
+Project-URL: Homepage, https://github.com/marn-x/MADS-ML-Marn_X
+Project-URL: Documentation, https://github.com/marn-x/MADS-ML-Marn_X/blob/main/README.md
+Project-URL: Repository, https://github.com/marn-x/MADS-ML-Marn_X
+Project-URL: Issues, https://github.com/marn-x/MADS-ML-Marn_X/issues
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.12.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: hyperopt>=0.2.7
+Requires-Dist: jupyter>=1.1.1
+Requires-Dist: mads-datasets>=0.3.14
+Requires-Dist: mltrainer>=0.2.2
+Requires-Dist: pandas>=2.2.3
+Requires-Dist: plotly>=6.1.0
+Requires-Dist: seaborn>=0.13.2
+Requires-Dist: tensorboard>=2.19.0
+Requires-Dist: tokenizers>=0.21.1
+Requires-Dist: toml>=0.10.2
+Requires-Dist: tomlserializer>=0.2.0
+Requires-Dist: torch>=2.7.0
+Requires-Dist: torch-tb-profiler>=0.4.3
+Requires-Dist: torchinfo>=1.8.0
+Requires-Dist: torchvision>=0.22.0
+Dynamic: license-file
+
 # MADS-ML Marn_X - Marnix Ober 1890946
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
