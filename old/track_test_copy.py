@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from custom_factories import AugmentPreprocessor, EurosatDatasetFactory, eurosatsettings, eurosat_data_transforms
+from mltrainer.metrics import Accuracy, MAE, MASE, Metric
 
 from settings import get_device
 
@@ -213,67 +214,193 @@ class PyTorchTrainingTracker:
 
 def train_epoch(
     model: nn.Module,
-    loader: DataLoader,
+    loader: Union[DataLoader, Any],  # Any to include BaseDatastreamer
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: str,
-    tracker: Optional[PyTorchTrainingTracker] = None,
+    tracker: Optional[Any] = None,
     log_interval: int = 10
 ) -> Tuple[float, float]:
-    """Train for one epoch."""
+    """
+    Universal training function that works with both PyTorch DataLoaders and BaseDatastreamers.
+    
+    Args:
+        model: PyTorch model to train
+        loader: DataLoader or BaseDatastreamer object
+        optimizer: PyTorch optimizer
+        criterion: Loss function
+        device: Device to train on
+        tracker: Optional training tracker
+        log_interval: How often to log metrics
+    
+    Returns:
+        Tuple of (average_loss, accuracy_percentage)
+    """
     model.train()
     total_loss = 0
     correct = 0
     total = 0
     
-    for batch_idx, (data, target) in enumerate(loader):
-        data, target = data.to(device), target.to(device)
-        
-        optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, target)
-        loss.backward()
-        optimizer.step()
-        
-        total_loss += loss.item()
-        _, predicted = output.max(1)
-        total += target.size(0)
-        correct += predicted.eq(target).sum().item()
-        
-        if tracker and batch_idx % log_interval == 0:
-            tracker.log_metrics({
-                "train/batch_loss": loss.item(),
-                "train/batch_acc": 100. * correct / total
-            })
-            tracker.set_step(tracker.step + 1)
+    # Check if we're working with BaseDatastreamer
+    is_datastreamer = hasattr(loader, 'stream') and hasattr(loader, 'batchsize')
     
-    return total_loss / len(loader), 100. * correct / total
-
-
-def eval_epoch(
-    model: nn.Module,
-    loader: DataLoader,
-    criterion: nn.Module,
-    device: str
-) -> Tuple[float, float]:
-    """Evaluate for one epoch."""
-    model.eval()
-    total_loss = 0
-    correct = 0
-    total = 0
-    
-    with torch.no_grad():
-        for data, target in loader:
-            data, target = data.to(device), target.to(device)
+    if is_datastreamer:
+        # Handle BaseDatastreamer
+        num_batches = len(loader)
+        stream_iter = loader.stream()
+        
+        for batch_idx in range(num_batches):
+            try:
+                data, target = next(stream_iter)
+                
+                # Convert to tensors if they aren't already
+                if not isinstance(data, torch.Tensor):
+                    data = torch.tensor(data, dtype=torch.float32)
+                if not isinstance(target, torch.Tensor):
+                    target = torch.tensor(target, dtype=torch.long)
+                
+                data, target = data.to(device), target.to(device)
+                
+            except StopIteration:
+                print(f"Stream ended early at batch {batch_idx}/{num_batches}")
+                break
+            except Exception as e:
+                print(f"Error processing batch {batch_idx}: {e}")
+                continue
+            
+            # Standard training step
+            optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
+            loss.backward()
+            optimizer.step()
             
             total_loss += loss.item()
             _, predicted = output.max(1)
             total += target.size(0)
             correct += predicted.eq(target).sum().item()
+            
+            if tracker and batch_idx % log_interval == 0:
+                tracker.log_metrics({
+                    "train/batch_loss": loss.item(),
+                    "train/batch_acc": 100. * correct / total if total > 0 else 0.0
+                })
+                tracker.set_step(tracker.step + 1)
+        
+        # Calculate averages
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        accuracy = 100. * correct / total if total > 0 else 0.0
+        
+    else:
+        # Handle standard PyTorch DataLoader
+        for batch_idx, (data, target) in enumerate(loader):
+            data, target = data.to(device), target.to(device)
+            
+            optimizer.zero_grad()
+            output = model(data)
+            loss = criterion(output, target)
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            _, predicted = output.max(1)
+            total += target.size(0)
+            correct += predicted.eq(target).sum().item()
+            
+            if tracker and batch_idx % log_interval == 0:
+                tracker.log_metrics({
+                    "train/batch_loss": loss.item(),
+                    "train/batch_acc": 100. * correct / total
+                })
+                tracker.set_step(tracker.step + 1)
+        
+        # Calculate averages
+        avg_loss = total_loss / len(loader)
+        accuracy = 100. * correct / total
     
-    return total_loss / len(loader), 100. * correct / total
+    return avg_loss, accuracy
+
+
+def eval_epoch(
+    model: nn.Module,
+    loader: Union[DataLoader, Any],  # Any to include BaseDatastreamer
+    criterion: nn.Module,
+    device: str
+) -> Tuple[float, float]:
+    """
+    Universal evaluation function that works with both PyTorch DataLoaders and BaseDatastreamers.
+    
+    Args:
+        model: PyTorch model to evaluate
+        loader: DataLoader or BaseDatastreamer object
+        criterion: Loss function
+        device: Device to evaluate on
+    
+    Returns:
+        Tuple of (average_loss, accuracy_percentage)
+    """
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+    
+    # Check if we're working with BaseDatastreamer
+    is_datastreamer = hasattr(loader, 'stream') and hasattr(loader, 'batchsize')
+    
+    with torch.no_grad():
+        if is_datastreamer:
+            # Handle BaseDatastreamer
+            num_batches = len(loader)
+            stream_iter = loader.stream()
+            
+            for batch_idx in range(num_batches):
+                try:
+                    data, target = next(stream_iter)
+                    
+                    # Convert to tensors if they aren't already
+                    if not isinstance(data, torch.Tensor):
+                        data = torch.tensor(data, dtype=torch.float32)
+                    if not isinstance(target, torch.Tensor):
+                        target = torch.tensor(target, dtype=torch.long)
+                    
+                    data, target = data.to(device), target.to(device)
+                    
+                except StopIteration:
+                    print(f"Validation stream ended early at batch {batch_idx}/{num_batches}")
+                    break
+                except Exception as e:
+                    print(f"Error processing validation batch {batch_idx}: {e}")
+                    continue
+                
+                output = model(data)
+                loss = criterion(output, target)
+                
+                total_loss += loss.item()
+                _, predicted = output.max(1)
+                total += target.size(0)
+                correct += predicted.eq(target).sum().item()
+            
+            # Calculate averages
+            avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+            accuracy = 100. * correct / total if total > 0 else 0.0
+            
+        else:
+            # Handle standard PyTorch DataLoader
+            for data, target in loader:
+                data, target = data.to(device), target.to(device)
+                output = model(data)
+                loss = criterion(output, target)
+                
+                total_loss += loss.item()
+                _, predicted = output.max(1)
+                total += target.size(0)
+                correct += predicted.eq(target).sum().item()
+            
+            # Calculate averages
+            avg_loss = total_loss / len(loader)
+            accuracy = 100. * correct / total
+    
+    return avg_loss, accuracy
 
 
 def create_mltrainer_callbacks(
@@ -372,12 +499,22 @@ def create_mltrainer_callbacks(
         "on_train_end": on_train_end
     }
 
+def get_mltrainer_metrics(metric: str):
+    if metric.lower() == "accuracy":
+        return Accuracy()
+    elif metric.lower() == "mae":
+        return MAE()
+    elif metric.lower() == "mase":
+        return MASE()
+    else:
+        raise NotImplementedError(f"Metric {metric} not found...")
 
 def track_pytorch_training(
    model: nn.Module,
    train_loader: DataLoader,
    val_loader: Optional[DataLoader] = None,
    use_mltrainer: bool = False,
+   mltrainer_metrics: Optional[list[Metric]] = [Accuracy()],
    optimizer: Optional[torch.optim.Optimizer] = None,
    criterion: Optional[nn.Module] = None,
    epochs: int = 10,
@@ -455,15 +592,12 @@ def track_pytorch_training(
            backend_upper = backend.upper()
            report_types = [ReportTypes(backend_upper)]
            
-           # Set up metrics
-           metrics = [Accuracy()]
-           
            # Set up optimizer kwargs from current optimizer
            optimizer_kwargs = {"lr": optimizer.param_groups[0]['lr'], "weight_decay": 1e-5}
            
            # Calculate steps
            train_steps = len(train_loader)
-           valid_steps = len(val_loader) if val_loader else 100
+           valid_steps = len(val_loader)
            
            # Convert data loaders to iterators if needed
            train_iterator = train_loader.stream() if hasattr(train_loader, "stream") else train_loader
@@ -472,7 +606,7 @@ def track_pytorch_training(
            # Create TrainerSettings
            settings = TrainerSettings(
                epochs=epochs,
-               metrics=metrics,
+               metrics=mltrainer_metrics,
                logdir=Path(checkpoint_dir) if checkpoint_dir else Path("./logs"),
                train_steps=train_steps,
                valid_steps=valid_steps,
@@ -574,26 +708,6 @@ def ray_tune_pytorch(
 ):
     """
     Run hyperparameter tuning with Ray Tune.
-    
-    Args:
-        model_fn: Function that returns a model instance
-        data_fn: Function that returns (train_loader, val_loader)
-        config: Dictionary of hyperparameter search spaces
-        num_samples: Number of trial runs
-        max_epochs: Maximum epochs per trial
-        gpus_per_trial: GPUs to allocate per trial
-        cpus_per_trial: CPUs to allocate per trial
-        checkpoint_dir: Directory to save checkpoints
-        experiment_name: Name of the experiment
-        metric: Metric to optimize
-        mode: "min" or "max" for the metric
-    
-    Example config:
-        config = {
-            "lr": tune.loguniform(1e-4, 1e-1),
-            "batch_size": tune.choice([16, 32, 64]),
-            "hidden_size": tune.choice([128, 256, 512])
-        }
     """
     try:
         import ray
@@ -604,15 +718,15 @@ def ray_tune_pytorch(
     except ImportError:
         raise ImportError("Ray Tune is not installed. Please install it with: pip install 'ray[tune]'")
     
-    def train_ray_tune(config):
+    def train_ray_tune(config, checkpoint_dir=None):
         """Training function for Ray Tune."""
         # Get device
         device = "cuda" if torch.cuda.is_available() and gpus_per_trial > 0 else "cpu"
         
-        # Create model
+        # Create model - this calls the function, not capturing the model
         model = model_fn().to(device)
         
-        # Create data loaders (potentially using config["batch_size"])
+        # Create data loaders - this calls the function, not capturing the loaders
         train_loader, val_loader = data_fn()
         
         # Create optimizer with config
@@ -651,9 +765,9 @@ def ray_tune_pytorch(
                 }, checkpoint_path)
                 
                 checkpoint = Checkpoint.from_directory(str(checkpoint_path.parent))
-                ray.train.report(metrics, checkpoint=checkpoint)
+                tune.report(metrics, checkpoint=checkpoint)
             else:
-                ray.train.report(metrics)
+                tune.report(metrics)
     
     # Set up Ray Tune
     ray.init(ignore_reinit_error=True)
@@ -672,9 +786,15 @@ def ray_tune_pytorch(
         metric_columns=["train_loss", "train_accuracy", "val_loss", "val_accuracy"]
     )
     
+    # Use tune.with_parameters to pass large objects through Ray's object store
+    trainable = tune.with_parameters(
+        train_ray_tune,
+        checkpoint_dir=checkpoint_dir
+    )
+    
     # Run tuning
     result = tune.run(
-        train_ray_tune,
+        trainable,
         name=experiment_name,
         config=config,
         num_samples=num_samples,
@@ -700,148 +820,78 @@ def ray_tune_pytorch(
     return result
 
 
-# Example usage
+# Example usage - FIXED VERSION
 if __name__ == "__main__":
-    # Example with a simple model
-    import torchvision
-    import torchvision.transforms as transforms
+    # ... (previous code remains the same) ...
     
-    eurosatfactory = EurosatDatasetFactory(eurosatsettings, datadir=Path.home() / ".cache/mads_datasets")
-    preprocessor = AugmentPreprocessor(eurosat_data_transforms)
-    streamers = eurosatfactory.create_datastreamer(batchsize=32, preprocessor=preprocessor)
-
-    train = streamers["train"]
-    valid = streamers["valid"]
-    
-    # Create a simple CNN model
-    class SimpleCNN(nn.Module):
-        def __init__(self, num_classes=10, hidden_size=128):
-            super(SimpleCNN, self).__init__()
-            self.conv1 = nn.Conv2d(3, 16, 3, padding=1)
-            self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
-            self.pool = nn.MaxPool2d(2, 2)
-            self.fc1 = nn.Linear(32 * 8 * 8, hidden_size)
-            self.fc2 = nn.Linear(hidden_size, num_classes)
-            self.relu = nn.ReLU()
-            self.dropout = nn.Dropout(0.5)
-            
-        def forward(self, x):
-            x = self.pool(self.relu(self.conv1(x)))
-            x = self.pool(self.relu(self.conv2(x)))
-            x = x.view(-1, 32 * 8 * 8)
-            x = self.relu(self.fc1(x))
-            x = self.dropout(x)
-            x = self.fc2(x)
-            return x
-    
-    # Example 1: Track with TensorBoard
-    print("Example 1: Tracking with TensorBoard")
-    config = {
-        "input_size": 3,
-        "output_size": 20,
-        "data_dir": "data/raw/gestures/gestures-dataset",
-        "hidden_size": 256,
-        "dropout": 0.3,
-        "num_layers": 2,
-    }
-
-    from torchvision.models import resnet18, ResNet18_Weights
-    resnet = torchvision.models.resnet18(weights=ResNet18_Weights.DEFAULT)
-
-    for name, param in resnet.named_parameters():
-        param.requires_grad = False
-
-    resnet.fc = nn.Sequential(
-        nn.Linear(resnet.fc.in_features, 10)
-        # nn.Linear(in_features, 128), nn.ReLU(), nn.Dropout(0.1), nn.Linear(128, 5)
-    )
-
-    # resnet = resnet.to("cuda")
-
-    # # model = GRUmodel()
-    # tracker = track_pytorch_training(
-    #     model=resnet,
-    #     train_loader=train,
-    #     val_loader=valid,
-    #     backend="mlflow",
-    #     experiment_name="cnn_classification",
-    #     use_mltrainer=True,
-    #     epochs=1,
-    #     checkpoint_dir="checkpoints/tensorboard",
-    #     device=get_device()
-    # )
-    # model = SimpleCNN()
-    # tracker = track_pytorch_training(
-    #     model=model,
-    #     train_loader=train_loader,
-    #     val_loader=val_loader,
-    #     backend="tensorboard",
-    #     experiment_name="cnn_classification",
-    #     epochs=5,
-    #     checkpoint_dir="checkpoints/tensorboard"
-    # )
-    
-    # Example 2: Track with MLFlow
-    print("\nExample 2: Tracking with MLFlow")
-    # tracker = track_pytorch_training(
-    #     model=SimpleCNN(),
-    #     train_loader=train_loader,
-    #     val_loader=val_loader,
-    #     backend="mlflow",
-    #     experiment_name="cnn_classification",
-    #     epochs=5,
-    #     checkpoint_dir="checkpoints/mlflow"
-    # )
-    
-    # Example 3: Using with mltrainer
-    print("\nExample 3: Using with mltrainer")
-    # Note: Make sure your model output dimensions match your batch size
-    # If you get batch size mismatch errors, check:
-    # 1. Your model's final layer output dimension matches num_classes
-    # 2. Your data loader is returning the correct batch shape
-    # tracker = track_pytorch_training(
-    #     model=SimpleCNN(num_classes=10),  # Ensure num_classes matches your dataset
-    #     train_loader=train_loader,
-    #     val_loader=val_loader,
-    #     backend="tensorboard",
-    #     experiment_name="mltrainer_cnn",
-    #     epochs=5,
-    #     use_mltrainer=True,
-    #     checkpoint_dir="checkpoints/mltrainer"
-    # )
-    
-    # Example 4: Ray Tune Hyperparameter Search
+    # Example 4: Ray Tune Hyperparameter Search - FIXED
     print("\nExample 4: Ray Tune Hyperparameter Search")
     from ray import tune
     
-    def model_fn():
-        return SimpleCNN(hidden_size=config.get("hidden_size", 128))
+    # Move these outside to avoid capturing in closure
+    # def create_model():
+    #     """Factory function to create a fresh model instance."""
+    #     from torchvision.models import resnet18, ResNet18_Weights
+    #     resnet = resnet18(weights=ResNet18_Weights.DEFAULT)
+        
+    #     # Freeze all layers except the last one
+    #     for name, param in resnet.named_parameters():
+    #         param.requires_grad = False
+        
+    #     # Replace the final layer
+    #     resnet.fc = nn.Sequential(
+    #         nn.Linear(resnet.fc.in_features, 10)
+    #     )
+        
+    #     return resnet
     
-    def data_fn():
-        # Create your data loaders here
-        # This is just an example structure
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
-        # train_dataset = ...
-        # val_dataset = ...
-        # train_loader = DataLoader(train_dataset, batch_size=config.get("batch_size", 32))
-        # val_loader = DataLoader(val_dataset, batch_size=32)
-        # return train_loader, val_loader
-        pass
+
+    def create_model():
+        from mltrainer.imagemodels import CNNblocks, CNNConfig
+
+        config = CNNConfig(
+            batchsize=32,
+            input_channels=3,      # RGB images have 3 channels
+            num_classes=10,        # EuroSAT has 10 classes
+            kernel_size=3,         # Standard 3x3 kernels
+            hidden=64,             # Number of hidden channels
+            num_layers=4,          # Number of additional conv layers
+            maxpool=2,             # 2x2 maxpool
+            matrixshape=(64, 64)   # EuroSAT images are 64x64
+        )
+
+        return CNNblocks(config)
+
     
-    config = {
+    def create_data_loaders():
+        """Factory function to create fresh data loader instances."""
+        # Create new instances of the data factory and preprocessor
+        eurosatfactory = EurosatDatasetFactory(
+            eurosatsettings, 
+            datadir=Path.home() / ".cache/mads_datasets"
+        )
+        preprocessor = AugmentPreprocessor(eurosat_data_transforms)
+        streamers = eurosatfactory.create_datastreamer(
+            batchsize=32, 
+            preprocessor=preprocessor
+        )
+        
+        return streamers["train"], streamers["valid"]
+    
+    # Configure hyperparameter search
+    search_config = {
         "lr": tune.loguniform(1e-4, 1e-1),
-        "batch_size": tune.choice([16, 32, 64]),
-        "hidden_size": tune.choice([64, 128, 256])
+        # Removed batch_size and hidden_size since we're using a fixed architecture
     }
     
+    # Run the hyperparameter search
     result = ray_tune_pytorch(
-        model_fn=model_fn,
-        data_fn=data_fn,
-        config=config,
+        model_fn=create_model,  # Pass the function, not the model
+        data_fn=create_data_loaders,  # Pass the function, not the loaders
+        config=search_config,
         num_samples=10,
-        max_epochs=5,
-        experiment_name="cnn_hyperparameter_search"
+        max_epochs=1,
+        experiment_name="resnet_hyperparameter_search",
+        gpus_per_trial=1 if torch.cuda.is_available() else 0,
+        cpus_per_trial=24
     )

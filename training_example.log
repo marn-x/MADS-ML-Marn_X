@@ -1,0 +1,15 @@
+2025-06-06 16:03:58 | INFO     | __main__:configure_logging:50 - Logging configured with level: DEBUG
+2025-06-06 16:03:58 | DEBUG    | __main__:to_toml:146 - Saving configuration to TOML: config.toml
+2025-06-06 16:03:58 | INFO     | __main__:load_config:418 - Loading configuration...
+2025-06-06 16:03:58 | INFO     | __main__:configure_logging:50 - Logging configured with level: DEBUG
+2025-06-06 16:03:58 | INFO     | __main__:configure_logging:50 - Logging configured with level: DEBUG
+2025-06-06 16:03:58 | INFO     | __main__:register_optimizer:254 - Registering optimizer: custom
+2025-06-06 16:03:58 | INFO     | __main__:<module>:1480 - Creating data loaders
+2025-06-06 16:03:58 | INFO     | __main__:create_loaders:370 - Creating data loaders for dataset: eurosat
+2025-06-06 16:03:58 | DEBUG    | __main__:create_loaders:379 - Using default EurosatDatasetFactory
+2025-06-06 16:03:58 | INFO     | mads_datasets.base:download_data:121 - Folder already exists at /home/marnix/.cache/mads_datasets/EuroSAT_RGB
+2025-06-06 16:04:02 | INFO     | __main__:<module>:1484 - Starting training example
+2025-06-06 16:04:02 | INFO     | __main__:<module>:1495 - Example 6: Ray Tune with configuration
+2025-06-06 16:04:02 | INFO     | __main__:ray_tune_pytorch:1154 - Starting Ray Tune hyperparameter search
+2025-06-06 16:04:04 | INFO     | __main__:ray_tune_pytorch:1240 - Ray initialized
+2025-06-06 16:04:04 | INFO     | __main__:ray_tune_pytorch:1263 - Starting 10 trials with 10 epochs each

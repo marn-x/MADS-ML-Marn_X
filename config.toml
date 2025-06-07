@@ -1,11 +1,41 @@
-# General settings (can be overwritten in file specific configs below)
-[ settings ]
-# Logs to sys.stderr and logs/logs.log
-logging_level = "INFO" # Available levels: ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]
+model_name = "mymodel"
+num_classes = 10
+pretrained = true
+epochs = 1
+batch_size = 64
+learning_rate = 0.001
+optimizer_type = "adam"
+criterion_type = "cross_entropy"
+device = "auto"
+log_level = "DEBUG"
+log_file = "training_example.log"
+log_interval = 10
+experiment_name = "eurosat_classification"
+backend = "tensorboard"
+log_dir = "runs"
+checkpoint_dir = "./checkpoints"
+save_best_only = true
+data_dir = "~/.cache/mads_datasets"
+dataset_name = "eurosat"
+num_workers = 4
+pin_memory = true
+early_stopping = true
+early_stopping_patience = 5
+early_stopping_min_delta = 0.001
+use_mltrainer = false
+mltrainer_metrics = [ "accuracy",]
+ray_num_samples = 10
+ray_max_epochs = 10
+ray_gpus_per_trial = 0.5
+ray_cpus_per_trial = 1.0
+ray_metric = "val_accuracy"
+ray_mode = "max"
 
-raw = "data/raw"
-processed = "data/processed"
-models = "models"
-img = "img"
+[optimizer_kwargs]
+weight_decay = 1e-5
 
-[ convolutions ]
+[criterion_kwargs]
+
+[tags]
+
+[scheduler_kwargs]
